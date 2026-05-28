@@ -537,8 +537,12 @@ async function onSubmit(e) {
   let username = null;
 
   if (!raw.startsWith('keeta_')) {
-    // Accept either bare "ty" or full "ty$keeta.xyz"; anchor wants the bare handle.
-    const handle = raw.toLowerCase().endsWith('$keeta.xyz') ? raw.slice(0, -'$keeta.xyz'.length) : raw;
+    // Require the full namespaced form for usernames: e.g. ty$keeta.xyz.
+    if (!raw.toLowerCase().endsWith('$keeta.xyz')) {
+      setStatus(`Usernames must be entered as {name}$keeta.xyz (e.g. "ty$keeta.xyz"). Got "${raw}".`);
+      return;
+    }
+    const handle = raw.slice(0, -'$keeta.xyz'.length);
     // Treat as a username, resolve through the username anchor.
     setStatus('Resolving username…');
     const resolved = await resolveViaUsernameAnchor(handle);
@@ -555,7 +559,7 @@ async function onSubmit(e) {
     await loadHoldings(address, username);
     // update URL so the result is shareable. Prefer the human-readable username when we have one.
     const url = new URL(window.location);
-    url.searchParams.set('account', username || address);
+    url.searchParams.set('account', username ? `${username}$keeta.xyz` : address);
     window.history.replaceState({}, '', url);
   } catch (e) {
     console.error(e);
