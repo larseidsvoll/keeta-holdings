@@ -4,19 +4,28 @@
 const NODE_API = 'https://rep1.main.network.api.keeta.com';
 const PRICE_ANCHOR = 'https://asset-estimate-anchor.keeta.com';
 
-// Alpaca FX Anchor — discovered on-chain at this account. Quotes KTA<->community tokens
-// across ~74 assets. We use it as a fallback when the canonical anchor cannot quote a token.
-const ALPACA_FX_ANCHOR_ACCOUNT = 'keeta_aabyuc4ce7n7n7gyjbcszpxlawujaacpu2wj72fljjjhhhyf25xmj66gand2ori';
+// Known community FX anchors, discovered on-chain. Each publishes an FX service
+// with a getEstimate endpoint, a currencyMap of $TICKER->tokenId, and from/to
+// routes against KTA. We harvest all of them so we can cascade through anchors
+// until one of them quotes a given community token.
+//
+// To add an anchor: drop its account address here. Everything else is read
+// from on-chain metadata at load time.
+const COMMUNITY_FX_ANCHORS = [
+  'keeta_aabyuc4ce7n7n7gyjbcszpxlawujaacpu2wj72fljjjhhhyf25xmj66gand2ori', // Alpaca FX Anchor
+  'keeta_athqkb6yw6h2e436xxaakuy4bctrqkqfctvy5xsp3ugvb3avv56zruxjcxauq', // Murphy (MURF) FX
+  'keeta_aab2lqgwz56u6dvfbqtsadcnfc2y4wdvl7rd2pkboxoray5mj3hmdzot2neu4wq', // Velocity FX Anchor
+];
 
 let ASSETS = {}; // sym -> {token, decimals, category, description}
 let TOKEN_TO_SYM = {}; // tokenId -> symbol
 let USD_TOKEN = '';
 let KTA_TOKEN = '';
 
-// Alpaca FX anchor state, hydrated lazily on first need.
-let alpacaTokens = null;       // Set<tokenId> the anchor can quote
-let alpacaSymbols = {};        // tokenId -> symbol (from the anchor's currencyMap)
-let alpacaEstimateURL = null;  // anchor's getEstimate endpoint
+// Community FX state, hydrated once at app start.
+// Each entry: { account, estimateURL, tokens: Set<tokenId>, symbols: {tokenId: ticker} }
+let communityAnchors = [];
+let communitySymbols = {}; // unioned: tokenId -> ticker (first anchor that names it wins)
 
 let currentFilter = 'all';
 let currentSort = 'value-desc';
@@ -96,9 +105,9 @@ async function fetchTokenInfo(tokenId) {
     let description = info.description || '';
     const meta = await parseAccountMetadata(info.metadata);
     if (meta && typeof meta.decimalPlaces === 'number') decimals = meta.decimalPlaces;
-    // Prefer the on-chain symbol from Alpaca's currencyMap if we have one (it carries $ ticker
-    // style symbols), else fall back to the token account's name field.
-    const sym = alpacaSymbols[tokenId] || info.name || tokenId.slice(0, 10);
+    // Prefer the on-chain symbol from any community FX anchor's currencyMap (those carry
+    // $TICKER style symbols), else fall back to the token account's name field.
+    const sym = communitySymbols[tokenId] || info.name || tokenId.slice(0, 10);
     return {
       symbol: sym,
       decimals,
@@ -136,38 +145,58 @@ async function parseAccountMetadata(b64) {
   } catch { return null; }
 }
 
-// Pull the Alpaca FX anchor's service metadata: which tokens it can quote, the
-// symbol map, and the getEstimate endpoint. Cached after first call.
-async function loadAlpacaAnchor() {
-  if (alpacaTokens !== null) return; // already loaded (or attempted)
-  alpacaTokens = new Set(); // mark as attempted even on failure
-  try {
-    const res = await fetch(`${NODE_API}/api/node/ledger/account/${ALPACA_FX_ANCHOR_ACCOUNT}`);
-    if (!res.ok) return;
-    const data = await res.json();
-    const meta = await parseAccountMetadata(data.info?.metadata);
-    if (!meta) return;
-    // currencyMap: { "$LUCKY": "keeta_...", ... }
-    for (const [sym, tok] of Object.entries(meta.currencyMap || {})) {
-      const cleanSym = sym.replace(/^\$/, '');
-      alpacaSymbols[tok] = cleanSym;
-      alpacaTokens.add(tok);
-    }
-    // services.fx.<provider>.operations.getEstimate
-    const providers = meta.services?.fx || {};
-    for (const provider of Object.values(providers)) {
-      if (provider.operations?.getEstimate) {
-        alpacaEstimateURL = provider.operations.getEstimate;
-        // Also union the from-token list so we know which assets the anchor will price.
-        for (const route of provider.from || []) {
-          for (const tok of route.currencyCodes || []) alpacaTokens.add(tok);
-        }
-        break;
+// Pull each community FX anchor's service metadata in parallel: token list, symbol map,
+// and getEstimate endpoint. Called once at app start. Anchors that fail to load are
+// skipped silently so one bad anchor never blocks the rest.
+async function loadCommunityAnchors() {
+  if (communityAnchors.length) return; // already loaded
+  await Promise.all(COMMUNITY_FX_ANCHORS.map(async (account) => {
+    try {
+      const res = await fetch(`${NODE_API}/api/node/ledger/account/${account}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const meta = await parseAccountMetadata(data.info?.metadata);
+      if (!meta) return;
+
+      const tokens = new Set();
+      const symbols = {};
+
+      // currencyMap: { "$LUCKY": "keeta_...", ... }
+      for (const [sym, tok] of Object.entries(meta.currencyMap || {})) {
+        const cleanSym = sym.replace(/^\$/, '');
+        symbols[tok] = cleanSym;
+        tokens.add(tok);
+        // Union into the global symbol map. First anchor to name a token wins.
+        if (!communitySymbols[tok]) communitySymbols[tok] = cleanSym;
       }
+
+      // Pick the first FX provider with a getEstimate operation.
+      let estimateURL = null;
+      const providers = meta.services?.fx || {};
+      for (const provider of Object.values(providers)) {
+        if (provider.operations?.getEstimate) {
+          estimateURL = provider.operations.getEstimate;
+          // Union from-route token list into our quotable set.
+          for (const route of provider.from || []) {
+            for (const tok of route.currencyCodes || []) tokens.add(tok);
+          }
+          break;
+        }
+      }
+
+      if (estimateURL) {
+        communityAnchors.push({
+          account,
+          estimateURL,
+          name: data.info?.name || account.slice(0, 14),
+          tokens,
+          symbols,
+        });
+      }
+    } catch (e) {
+      console.warn(`Community FX anchor metadata fetch failed for ${account}`, e);
     }
-  } catch (e) {
-    console.warn('Alpaca FX anchor metadata fetch failed', e);
-  }
+  }));
 }
 
 // Low-level: ask a specific FX anchor for an estimate. Returns the converted bigint
@@ -215,10 +244,12 @@ async function fetchPriceUSD(fromToken, fromDecimals) {
     if (usdBase !== null && usdBase > 0n) return Number(usdBase) / 100;
   } catch { /* fall through */ }
 
-  // Path 2: ask the Alpaca FX anchor for the KTA equivalent, then convert KTA→USD.
-  if (alpacaEstimateURL && alpacaTokens.has(fromToken)) {
+  // Path 2: ask each community FX anchor that lists this token for a KTA quote.
+  // First non-zero result wins. We then convert KTA->USD via the canonical anchor.
+  for (const anchor of communityAnchors) {
+    if (!anchor.tokens.has(fromToken)) continue;
     try {
-      const ktaBase = await getEstimate(alpacaEstimateURL, fromToken, KTA_TOKEN, oneUnit);
+      const ktaBase = await getEstimate(anchor.estimateURL, fromToken, KTA_TOKEN, oneUnit);
       if (ktaBase !== null && ktaBase > 0n) {
         const ktaUsd = await getKtaUsdRate();
         if (ktaUsd > 0) {
@@ -226,7 +257,7 @@ async function fetchPriceUSD(fromToken, fromDecimals) {
           return ktaUnits * ktaUsd;
         }
       }
-    } catch { /* no quote */ }
+    } catch { /* try the next anchor */ }
   }
 
   return null;
@@ -236,7 +267,7 @@ async function loadHoldings(address) {
   setStatus('Loading account…');
   const [balances] = await Promise.all([
     fetchBalances(address),
-    loadAlpacaAnchor(), // hydrate the FX anchor metadata in parallel
+    loadCommunityAnchors(), // hydrate FX anchor metadata in parallel
   ]);
 
   if (!balances.length) {
