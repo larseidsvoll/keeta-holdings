@@ -348,7 +348,7 @@ async function loadHoldings(address, knownUsername = null) {
     const label = $('#account-label');
     const short = `${address.slice(0, 14)}…${address.slice(-8)}`;
     if (u && u.username) {
-      label.innerHTML = `<span class="font-semibold text-neutral-800">${escapeHTML(u.username)}$keeta.xyz</span> <span class="text-neutral-400">${short}</span>`;
+      label.innerHTML = `<span class="font-semibold text-neutral-800 dark:text-neutral-100">${escapeHTML(u.username)}$keeta.xyz</span> <span class="text-neutral-400 dark:text-neutral-500">${short}</span>`;
     } else {
       label.textContent = short;
     }
@@ -399,7 +399,7 @@ function render() {
   });
 
   if (!sorted.length) {
-    tbody.innerHTML = `<tr><td colspan="4" class="px-4 py-6 text-center text-sm text-neutral-500">No assets in this category.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="4" class="px-4 py-6 text-center text-sm text-neutral-500 dark:text-neutral-400">No assets in this category.</td></tr>`;
   }
 
   for (const r of sorted) {
@@ -407,10 +407,10 @@ function render() {
     tr.innerHTML = `
       <td class="px-4 py-3">
         <div class="flex items-center gap-3">
-          <div class="flex h-8 w-8 items-center justify-center rounded-full bg-neutral-100 text-xs font-semibold text-neutral-700">${r.symbol.slice(0, Math.min(4, r.symbol.length))}</div>
+          <div class="flex h-8 w-8 items-center justify-center rounded-full bg-neutral-100 text-xs font-semibold text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">${r.symbol.slice(0, Math.min(4, r.symbol.length))}</div>
           <div>
             <div class="font-medium">${r.symbol}</div>
-            <div class="text-xs text-neutral-500">${r.description}</div>
+            <div class="text-xs text-neutral-500 dark:text-neutral-400">${r.description}</div>
           </div>
         </div>
       </td>
@@ -462,13 +462,19 @@ function renderAllocation(rows, total) {
     slices.push({ symbol: 'Other', valueUSD: restSum });
   }
 
-  // Grayscale palette, lightest at the smallest slice.
-  const SHADES = ['#0f172a', '#374151', '#525b6e', '#71798c', '#94a3b8', '#cbd5e1'];
+  // Grayscale palette, lightest at the smallest slice. Inverted in dark mode.
+  const isDark = document.documentElement.classList.contains('dark');
+  const SHADES = isDark
+    ? ['#f1f5f9', '#cbd5e1', '#94a3b8', '#71798c', '#525b6e', '#374151']
+    : ['#0f172a', '#374151', '#525b6e', '#71798c', '#94a3b8', '#cbd5e1'];
+  const trackColor = isDark ? '#1f2937' : '#f1f5f9';
+  const totalLabelColor = isDark ? '#94a3b8' : '#475569';
+  const totalValueColor = isDark ? '#f1f5f9' : '#0f172a';
 
   // Build SVG arcs. Use a donut by drawing each slice as a stroked arc on a
   // background circle. Stroke width controls the donut thickness.
   const cx = 50, cy = 50, r = 38, sw = 18;
-  let parts = `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#f1f5f9" stroke-width="${sw}"/>`;
+  let parts = `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${trackColor}" stroke-width="${sw}"/>`;
   const circumference = 2 * Math.PI * r;
   let offset = 0;
   slices.forEach((s, i) => {
@@ -479,8 +485,8 @@ function renderAllocation(rows, total) {
     offset += length;
   });
   // Total label in the center.
-  parts += `<text x="${cx}" y="${cy - 2}" text-anchor="middle" font-size="7" fill="#475569" font-family="ui-monospace,monospace">TOTAL</text>`;
-  parts += `<text x="${cx}" y="${cy + 7}" text-anchor="middle" font-size="9" font-weight="600" fill="#0f172a" font-family="ui-sans-serif,system-ui,sans-serif">${escapeHTML(compactUSD(total))}</text>`;
+  parts += `<text x="${cx}" y="${cy - 2}" text-anchor="middle" font-size="7" fill="${totalLabelColor}" font-family="ui-monospace,monospace">TOTAL</text>`;
+  parts += `<text x="${cx}" y="${cy + 7}" text-anchor="middle" font-size="9" font-weight="600" fill="${totalValueColor}" font-family="ui-sans-serif,system-ui,sans-serif">${escapeHTML(compactUSD(total))}</text>`;
   svg.innerHTML = parts;
 
   // Legend.
@@ -491,9 +497,9 @@ function renderAllocation(rows, total) {
       <li class="flex items-center justify-between gap-3">
         <span class="flex items-center gap-2 min-w-0">
           <span class="inline-block h-2.5 w-2.5 flex-none rounded-sm" style="background:${color}"></span>
-          <span class="truncate font-medium text-neutral-800">${escapeHTML(s.symbol)}</span>
+          <span class="truncate font-medium text-neutral-800 dark:text-neutral-100">${escapeHTML(s.symbol)}</span>
         </span>
-        <span class="mono text-neutral-500">${pct}%</span>
+        <span class="mono text-neutral-500 dark:text-neutral-400">${pct}%</span>
       </li>
     `;
   }).join('');
@@ -569,12 +575,26 @@ async function onSubmit(e) {
   }
 }
 
+function syncThemeIcon() {
+  const isDark = document.documentElement.classList.contains('dark');
+  $('#theme-icon-sun').classList.toggle('hidden', !isDark);
+  $('#theme-icon-moon').classList.toggle('hidden', isDark);
+}
+
 function bind() {
   $('#lookup-form').addEventListener('submit', onSubmit);
   $('#sort-by').addEventListener('change', (e) => { currentSort = e.target.value; render(); });
   document.querySelectorAll('#filter-tabs button').forEach((btn) =>
     btn.addEventListener('click', () => setFilter(btn.dataset.filter))
   );
+  $('#theme-toggle').addEventListener('click', () => {
+    const isDark = document.documentElement.classList.toggle('dark');
+    localStorage.setItem('theme', isDark ? 'dark' : 'light');
+    syncThemeIcon();
+    // Re-render the pie chart so its inline SVG colors flip too.
+    render();
+  });
+  syncThemeIcon();
 }
 
 async function init() {

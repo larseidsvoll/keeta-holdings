@@ -5,25 +5,47 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Keeta Holdings</title>
   <meta name="description" content="View the holdings of any Keeta Network account. Priced live by the asset-estimate-anchor on the Keeta Network." />
+  <meta name="theme-color" content="#fafafa" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#0a0a0a" media="(prefers-color-scheme: dark)" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230f172a'/%3E%3Ctext x='16' y='22' font-family='ui-monospace,monospace' font-size='18' font-weight='700' text-anchor='middle' fill='%23f8fafc'%3EK%3C/text%3E%3C/svg%3E" />
+  <script>
+    // Apply theme before paint to prevent flash.
+    (function () {
+      const t = localStorage.getItem('theme');
+      const dark = t === 'dark' || (!t && window.matchMedia('(prefers-color-scheme: dark)').matches);
+      if (dark) document.documentElement.classList.add('dark');
+    })();
+  </script>
   <script src="https://cdn.tailwindcss.com"></script>
+  <script>tailwind.config = { darkMode: 'class' };</script>
   <style>
     body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
     .mono { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace; }
     .tab-active { background-color: #0f172a; color: #f8fafc; }
     .tab { background-color: transparent; color: #475569; }
+    .dark .tab-active { background-color: #f1f5f9; color: #0a0a0a; }
+    .dark .tab { color: #94a3b8; }
   </style>
 </head>
-<body class="min-h-screen bg-neutral-50 text-neutral-900">
+<body class="min-h-screen bg-neutral-50 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
   <main class="mx-auto max-w-4xl px-6 py-12">
-    <header class="mb-10">
+    <header class="mb-10 flex items-start justify-between gap-3">
       <div class="flex items-center gap-3">
-        <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-neutral-900 text-lg font-bold text-white">K</div>
+        <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-neutral-900 text-lg font-bold text-white dark:bg-neutral-100 dark:text-neutral-900">K</div>
         <div>
           <h1 class="text-2xl font-semibold tracking-tight">Keeta Holdings</h1>
-          <p class="text-sm text-neutral-500">Live holdings for any Keeta Network account.</p>
+          <p class="text-sm text-neutral-500 dark:text-neutral-400">Live holdings for any Keeta Network account.</p>
         </div>
       </div>
+      <button
+        id="theme-toggle"
+        type="button"
+        aria-label="Toggle dark mode"
+        class="rounded-lg border border-neutral-300 bg-white p-2 text-neutral-700 transition-colors hover:bg-neutral-100 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800"
+      >
+        <svg id="theme-icon-sun" class="hidden h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+        <svg id="theme-icon-moon" class="hidden h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+      </button>
     </header>
 
     <section class="mb-8">
@@ -35,11 +57,11 @@
           placeholder="keeta_... or username$keeta.xyz"
           autocomplete="off"
           spellcheck="false"
-          class="mono w-full rounded-lg border border-neutral-300 bg-white px-4 py-3 text-sm shadow-sm focus:border-neutral-900 focus:outline-none focus:ring-2 focus:ring-neutral-900/10"
+          class="mono w-full rounded-lg border border-neutral-300 bg-white px-4 py-3 text-sm shadow-sm focus:border-neutral-900 focus:outline-none focus:ring-2 focus:ring-neutral-900/10 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100 dark:placeholder-neutral-500 dark:focus:border-neutral-300 dark:focus:ring-neutral-100/10"
         />
         <button
           type="submit"
-          class="rounded-lg bg-neutral-900 px-6 py-3 text-sm font-medium text-white transition-colors hover:bg-neutral-700"
+          class="rounded-lg bg-neutral-900 px-6 py-3 text-sm font-medium text-white transition-colors hover:bg-neutral-700 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300"
         >
           View holdings
         </button>
@@ -49,33 +71,33 @@
     <section id="results" class="hidden">
       <div class="mb-4 flex items-center justify-between gap-4">
         <h2 class="text-lg font-semibold tracking-tight">Holdings</h2>
-        <div class="flex items-center gap-2 text-xs text-neutral-500">
+        <div class="flex items-center gap-2 text-xs text-neutral-500 dark:text-neutral-400">
           <span id="account-label" class="mono"></span>
         </div>
       </div>
 
-      <div id="allocation" class="mb-6 hidden overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm">
+      <div id="allocation" class="mb-6 hidden overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
         <div class="flex flex-col gap-6 p-5 sm:flex-row sm:items-center">
           <div class="flex items-center justify-center">
             <svg id="allocation-chart" viewBox="0 0 100 100" width="160" height="160" aria-label="Allocation pie chart"></svg>
           </div>
           <div class="flex-1">
-            <div class="mb-2 text-xs font-medium uppercase tracking-wide text-neutral-500">Allocation</div>
+            <div class="mb-2 text-xs font-medium uppercase tracking-wide text-neutral-500 dark:text-neutral-400">Allocation</div>
             <ul id="allocation-legend" class="space-y-1.5 text-sm"></ul>
           </div>
         </div>
       </div>
 
       <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div id="filter-tabs" class="flex gap-1 rounded-lg border border-neutral-200 bg-white p-1 text-xs font-medium">
+        <div id="filter-tabs" class="flex gap-1 rounded-lg border border-neutral-200 bg-white p-1 text-xs font-medium dark:border-neutral-800 dark:bg-neutral-900">
           <button data-filter="all"    class="tab-active rounded-md px-3 py-1.5">All</button>
           <button data-filter="fiat"   class="tab rounded-md px-3 py-1.5">Fiat</button>
           <button data-filter="token"  class="tab rounded-md px-3 py-1.5">Tokens</button>
           <button data-filter="stable" class="tab rounded-md px-3 py-1.5">Stables</button>
         </div>
         <div class="flex items-center gap-2 text-xs">
-          <label for="sort-by" class="text-neutral-500">Sort by:</label>
-          <select id="sort-by" class="rounded-md border border-neutral-200 bg-white px-2 py-1 text-xs font-medium focus:outline-none focus:ring-1 focus:ring-neutral-900">
+          <label for="sort-by" class="text-neutral-500 dark:text-neutral-400">Sort by:</label>
+          <select id="sort-by" class="rounded-md border border-neutral-200 bg-white px-2 py-1 text-xs font-medium focus:outline-none focus:ring-1 focus:ring-neutral-900 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100 dark:focus:ring-neutral-100">
             <option value="value-desc">Value &darr;</option>
             <option value="value-asc">Value &uarr;</option>
             <option value="amount-desc">Amount &darr;</option>
@@ -84,9 +106,9 @@
         </div>
       </div>
 
-      <div class="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm">
+      <div class="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
         <table class="w-full text-left text-sm">
-          <thead class="bg-neutral-50 text-xs uppercase tracking-wide text-neutral-500">
+          <thead class="bg-neutral-50 text-xs uppercase tracking-wide text-neutral-500 dark:bg-neutral-950 dark:text-neutral-400">
             <tr>
               <th class="px-4 py-3 font-medium">Asset</th>
               <th class="px-4 py-3 font-medium text-right">Amount</th>
@@ -94,9 +116,9 @@
               <th class="px-4 py-3 font-medium text-right">Value (USD)</th>
             </tr>
           </thead>
-          <tbody id="rows" class="divide-y divide-neutral-100"></tbody>
+          <tbody id="rows" class="divide-y divide-neutral-100 dark:divide-neutral-800"></tbody>
           <tfoot>
-            <tr class="bg-neutral-50 text-sm font-semibold">
+            <tr class="bg-neutral-50 text-sm font-semibold dark:bg-neutral-950">
               <td class="px-4 py-3" colspan="3">Total</td>
               <td id="total" class="px-4 py-3 text-right mono">$0.00</td>
             </tr>
@@ -104,20 +126,20 @@
         </table>
       </div>
 
-      <p class="mt-4 text-xs text-neutral-500">
+      <p class="mt-4 text-xs text-neutral-500 dark:text-neutral-400">
         Pricing by Keeta Network FX anchors discovered on-chain: <span class="mono">asset-estimate-anchor.keeta.com</span> for canonical assets, with community tokens priced through registered FX anchors including Alpaca, Murphy, and Velocity. Usernames resolved through the <span class="mono">keeta.xyz</span> username anchor. Quotes are live, point-in-time estimates. No third-party pricing APIs are used.
       </p>
     </section>
 
-    <section id="empty" class="rounded-xl border border-dashed border-neutral-300 bg-white p-8 text-center">
-      <p class="text-sm text-neutral-500">Enter a Keeta account address or username above to view holdings.</p>
+    <section id="empty" class="rounded-xl border border-dashed border-neutral-300 bg-white p-8 text-center dark:border-neutral-700 dark:bg-neutral-900">
+      <p class="text-sm text-neutral-500 dark:text-neutral-400">Enter a Keeta account address or username above to view holdings.</p>
     </section>
 
-    <section id="status" class="hidden mt-6 rounded-xl border border-neutral-200 bg-white p-6 text-center text-sm text-neutral-600"></section>
+    <section id="status" class="hidden mt-6 rounded-xl border border-neutral-200 bg-white p-6 text-center text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300"></section>
 
-    <footer class="mt-16 border-t border-neutral-200 pt-6 text-xs text-neutral-500">
+    <footer class="mt-16 border-t border-neutral-200 pt-6 text-xs text-neutral-500 dark:border-neutral-800 dark:text-neutral-400">
       <p>
-        <a class="underline underline-offset-2 hover:text-neutral-900" href="https://github.com/larseidsvoll/keeta-holdings">Open source on GitHub</a>
+        <a class="underline underline-offset-2 hover:text-neutral-900 dark:hover:text-neutral-100" href="https://github.com/larseidsvoll/keeta-holdings">Open source on GitHub</a>
         &middot; Part of Project Gildor &middot; Data from the public Keeta Network
       </p>
     </footer>
