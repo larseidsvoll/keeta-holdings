@@ -125,50 +125,57 @@ async function loadHoldings(address) {
     return;
   }
 
-  setStatus('Pricing assets through asset-estimate-anchor.keeta.com…');
-
-  const rows = [];
-  for (const b of balances) {
+  // Phase 1: resolve symbol/decimals/category for every balance in parallel.
+  // Known assets resolve synchronously from the registry; unknowns hit the node API.
+  const resolved = await Promise.all(balances.map(async (b) => {
     const tokenId = b.token;
-    let info = null;
-    let knownSymbol = TOKEN_TO_SYM[tokenId] || null;
+    const knownSymbol = TOKEN_TO_SYM[tokenId] || null;
+    let info;
     if (knownSymbol) {
       info = { ...ASSETS[knownSymbol], symbol: knownSymbol };
     } else {
-      // Unknown token: fetch its on-chain metadata.
       info = await fetchTokenInfo(tokenId);
-      if (!info) continue; // truly unresolvable
     }
-    const amountBase = hexToBigInt(b.balance);
-    let priceUSD = null;
-    let valueUSD = null;
-    try {
-      priceUSD = await fetchPriceUSD(info.token, info.decimals);
-      if (priceUSD !== null) {
-        const amountUnits = Number(amountBase) / 10 ** info.decimals;
-        valueUSD = amountUnits * priceUSD;
-      }
-    } catch (e) {
-      console.warn(`Price fetch failed for ${info.symbol}`, e);
-    }
-    rows.push({
+    if (!info) return null;
+    return {
       symbol: info.symbol,
       description: info.description,
       category: info.category,
-      amountBase,
+      amountBase: hexToBigInt(b.balance),
       decimals: info.decimals,
-      priceUSD,
-      valueUSD,
+      priceUSD: undefined, // undefined = still loading; null = no quote
+      valueUSD: undefined,
       tokenId,
-    });
-  }
+    };
+  }));
 
-  lastRows = rows;
+  // Render immediately with rows visible, prices showing a loading state.
+  lastRows = resolved.filter(Boolean);
   hideStatus();
   $('#account-label').textContent = `${address.slice(0, 14)}…${address.slice(-8)}`;
   $('#results').classList.remove('hidden');
   $('#empty').classList.add('hidden');
   render();
+
+  // Phase 2: fire all price fetches in parallel; rerender as each resolves.
+  await Promise.all(lastRows.map(async (row, idx) => {
+    try {
+      const priceUSD = await fetchPriceUSD(row.tokenId, row.decimals);
+      if (priceUSD === null) {
+        lastRows[idx].priceUSD = null;
+        lastRows[idx].valueUSD = null;
+      } else {
+        const amountUnits = Number(row.amountBase) / 10 ** row.decimals;
+        lastRows[idx].priceUSD = priceUSD;
+        lastRows[idx].valueUSD = amountUnits * priceUSD;
+      }
+    } catch (e) {
+      console.warn(`Price fetch failed for ${row.symbol}`, e);
+      lastRows[idx].priceUSD = null;
+      lastRows[idx].valueUSD = null;
+    }
+    render();
+  }));
 }
 
 function render() {
@@ -208,8 +215,8 @@ function render() {
         </div>
       </td>
       <td class="px-4 py-3 text-right mono">${formatAmount(r.amountBase, r.decimals)}</td>
-      <td class="px-4 py-3 text-right mono">${r.priceUSD === null ? '<span class="text-neutral-400">—</span>' : formatUSDValue(r.priceUSD)}</td>
-      <td class="px-4 py-3 text-right mono font-semibold">${r.valueUSD === null ? '<span class="text-neutral-400">—</span>' : formatUSDValue(r.valueUSD)}</td>
+      <td class="px-4 py-3 text-right mono">${r.priceUSD === undefined ? '<span class="text-neutral-300">…</span>' : r.priceUSD === null ? '<span class="text-neutral-400">—</span>' : formatUSDValue(r.priceUSD)}</td>
+      <td class="px-4 py-3 text-right mono font-semibold">${r.valueUSD === undefined ? '<span class="text-neutral-300">…</span>' : r.valueUSD === null ? '<span class="text-neutral-400">—</span>' : formatUSDValue(r.valueUSD)}</td>
     `;
     tbody.appendChild(tr);
   }
