@@ -4,6 +4,13 @@
 const NODE_API = 'https://rep1.main.network.api.keeta.com';
 const PRICE_ANCHOR = 'https://asset-estimate-anchor.keeta.com';
 
+// Username anchor — discovered through the network's static service registry at
+// https://static.network.keeta.com/metadata/services (services.username["keeta.xyz"]).
+// Resolves both directions: an address into its username, and a username into the
+// account address it points to. We use it to accept usernames in the lookup box and
+// to label the resolved account.
+const USERNAME_ANCHOR_RESOLVE = 'https://usernames.keeta.xyz/api/resolve';
+
 // Known community FX anchors, discovered on-chain. Each publishes an FX service
 // with a getEstimate endpoint, a currencyMap of $TICKER->tokenId, and from/to
 // routes against KTA. We harvest all of them so we can cascade through anchors
@@ -32,6 +39,10 @@ let currentSort = 'value-desc';
 let lastRows = [];
 
 const $ = (sel) => document.querySelector(sel);
+
+function escapeHTML(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
 
 async function loadAssets() {
   const res = await fetch('./assets/assets.json', { cache: 'no-cache' });
@@ -92,6 +103,21 @@ async function fetchBalances(address) {
   if (!res.ok) throw new Error(`Account lookup failed: ${res.status}`);
   const data = await res.json();
   return data.balances || [];
+}
+
+// Ask the username anchor to resolve any of: account address -> username, or
+// username -> account address. Returns { account, username } on success, or null
+// when the address has no registered username / the username is not claimed.
+async function resolveViaUsernameAnchor(input) {
+  try {
+    const res = await fetch(`${USERNAME_ANCHOR_RESOLVE}/${encodeURIComponent(input)}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data.ok || !data.account) return null;
+    return { account: data.account, username: data.username };
+  } catch {
+    return null;
+  }
 }
 
 // Best-effort lookup of an unknown token's symbol and decimals from its ledger account metadata.
@@ -263,8 +289,13 @@ async function fetchPriceUSD(fromToken, fromDecimals) {
   return null;
 }
 
-async function loadHoldings(address) {
+async function loadHoldings(address, knownUsername = null) {
   setStatus('Loading account…');
+  // Resolve username in parallel with everything else; never block on it.
+  const usernamePromise = knownUsername
+    ? Promise.resolve({ account: address, username: knownUsername })
+    : resolveViaUsernameAnchor(address);
+
   const [balances] = await Promise.all([
     fetchBalances(address),
     loadCommunityAnchors(), // hydrate FX anchor metadata in parallel
@@ -310,6 +341,18 @@ async function loadHoldings(address) {
   $('#results').classList.remove('hidden');
   $('#empty').classList.add('hidden');
   render();
+
+  // When the username comes back (or doesn't), update the header label without
+  // blocking the rest of the load.
+  usernamePromise.then((u) => {
+    const label = $('#account-label');
+    const short = `${address.slice(0, 14)}…${address.slice(-8)}`;
+    if (u && u.username) {
+      label.innerHTML = `<span class="font-semibold text-neutral-800">@${escapeHTML(u.username)}</span> <span class="text-neutral-400">${short}</span>`;
+    } else {
+      label.textContent = short;
+    }
+  }).catch(() => { /* leave the address-only label in place */ });
 
   // Phase 2: fire all price fetches in parallel; rerender as each resolves.
   await Promise.all(lastRows.map(async (row, idx) => {
@@ -403,17 +446,33 @@ function hideStatus() {
 
 async function onSubmit(e) {
   e.preventDefault();
-  const address = $('#address').value.trim();
-  if (!address || !address.startsWith('keeta_')) {
-    setStatus('Enter a valid Keeta account address (starts with keeta_).');
+  const raw = $('#address').value.trim();
+  if (!raw) {
+    setStatus('Enter a Keeta account address or username.');
     return;
   }
+
+  let address = raw;
+  let username = null;
+
+  if (!raw.startsWith('keeta_')) {
+    // Treat as a username, resolve through the username anchor.
+    setStatus('Resolving username…');
+    const resolved = await resolveViaUsernameAnchor(raw);
+    if (!resolved) {
+      setStatus(`Could not resolve username "${raw}". Try a Keeta account address (starts with keeta_).`);
+      return;
+    }
+    address = resolved.account;
+    username = resolved.username;
+  }
+
   $('#results').classList.add('hidden');
   try {
-    await loadHoldings(address);
-    // update URL so the result is shareable
+    await loadHoldings(address, username);
+    // update URL so the result is shareable. Prefer the human-readable username when we have one.
     const url = new URL(window.location);
-    url.searchParams.set('account', address);
+    url.searchParams.set('account', username || address);
     window.history.replaceState({}, '', url);
   } catch (e) {
     console.error(e);
