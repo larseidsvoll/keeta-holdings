@@ -4,9 +4,19 @@
 const NODE_API = 'https://rep1.main.network.api.keeta.com';
 const PRICE_ANCHOR = 'https://asset-estimate-anchor.keeta.com';
 
+// Alpaca FX Anchor — discovered on-chain at this account. Quotes KTA<->community tokens
+// across ~74 assets. We use it as a fallback when the canonical anchor cannot quote a token.
+const ALPACA_FX_ANCHOR_ACCOUNT = 'keeta_aabyuc4ce7n7n7gyjbcszpxlawujaacpu2wj72fljjjhhhyf25xmj66gand2ori';
+
 let ASSETS = {}; // sym -> {token, decimals, category, description}
 let TOKEN_TO_SYM = {}; // tokenId -> symbol
 let USD_TOKEN = '';
+let KTA_TOKEN = '';
+
+// Alpaca FX anchor state, hydrated lazily on first need.
+let alpacaTokens = null;       // Set<tokenId> the anchor can quote
+let alpacaSymbols = {};        // tokenId -> symbol (from the anchor's currencyMap)
+let alpacaEstimateURL = null;  // anchor's getEstimate endpoint
 
 let currentFilter = 'all';
 let currentSort = 'value-desc';
@@ -21,6 +31,13 @@ async function loadAssets() {
     TOKEN_TO_SYM[info.token] = sym;
   }
   USD_TOKEN = ASSETS.USD.token;
+  KTA_TOKEN = ASSETS.KTA.token;
+}
+
+// Parse "0x..." OR plain decimal string OR bigint string into a BigInt.
+function toBigInt(s) {
+  if (typeof s !== 'string') return 0n;
+  try { return BigInt(s); } catch { return 0n; }
 }
 
 function hexToBigInt(s) {
@@ -51,6 +68,15 @@ function formatUSDValue(n) {
   return n.toLocaleString(undefined, { style: 'currency', currency: 'USD' });
 }
 
+// Same as formatUSDValue but shows extra digits for sub-cent prices so
+// community tokens worth fractions of a cent don't all look like $0.00.
+function formatUSDPrice(n) {
+  if (n === 0) return '$0.00';
+  if (Math.abs(n) >= 0.01) return formatUSDValue(n);
+  // Show up to 8 significant digits for tiny values.
+  return '$' + n.toLocaleString(undefined, { minimumSignificantDigits: 2, maximumSignificantDigits: 4 });
+}
+
 async function fetchBalances(address) {
   // truncate=false returns full token ids; default truncates to keeta_...suffix.
   const res = await fetch(`${NODE_API}/api/node/ledger/account/${address}/balance?truncate=false`);
@@ -68,18 +94,13 @@ async function fetchTokenInfo(tokenId) {
     const info = data.info || {};
     let decimals = 0;
     let description = info.description || '';
-    if (info.metadata) {
-      try {
-        const raw = atob(info.metadata);
-        // Some metadata blobs are plain JSON; others are gzipped. Try plain JSON first.
-        try {
-          const meta = JSON.parse(raw);
-          if (typeof meta.decimalPlaces === 'number') decimals = meta.decimalPlaces;
-        } catch { /* not plain JSON, leave decimals=0 */ }
-      } catch { /* atob failed */ }
-    }
+    const meta = await parseAccountMetadata(info.metadata);
+    if (meta && typeof meta.decimalPlaces === 'number') decimals = meta.decimalPlaces;
+    // Prefer the on-chain symbol from Alpaca's currencyMap if we have one (it carries $ ticker
+    // style symbols), else fall back to the token account's name field.
+    const sym = alpacaSymbols[tokenId] || info.name || tokenId.slice(0, 10);
     return {
-      symbol: info.name || tokenId.slice(0, 10),
+      symbol: sym,
       decimals,
       description,
       category: 'token',
@@ -90,35 +111,133 @@ async function fetchTokenInfo(tokenId) {
   }
 }
 
-async function fetchPriceUSD(fromToken, fromDecimals) {
-  // Quote 1 whole unit of the asset in USD.
-  // The estimate anchor returns convertedAmount as hex in USD base units (2 decimals).
-  if (fromToken === USD_TOKEN) return 1; // trivial
-  const oneUnit = (10n ** BigInt(fromDecimals)).toString();
+// Decode an on-chain metadata blob (base64 of either plain JSON or zlib-compressed JSON).
+async function parseAccountMetadata(b64) {
+  if (!b64) return null;
+  let bytes;
+  try {
+    const bin = atob(b64);
+    bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  } catch { return null; }
+
+  // Try plain JSON first.
+  try {
+    const txt = new TextDecoder().decode(bytes);
+    return JSON.parse(txt);
+  } catch { /* not plain JSON, try inflate */ }
+
+  // Try DEFLATE (zlib).
+  try {
+    const ds = new DecompressionStream('deflate');
+    const stream = new Blob([bytes]).stream().pipeThrough(ds);
+    const txt = await new Response(stream).text();
+    return JSON.parse(txt);
+  } catch { return null; }
+}
+
+// Pull the Alpaca FX anchor's service metadata: which tokens it can quote, the
+// symbol map, and the getEstimate endpoint. Cached after first call.
+async function loadAlpacaAnchor() {
+  if (alpacaTokens !== null) return; // already loaded (or attempted)
+  alpacaTokens = new Set(); // mark as attempted even on failure
+  try {
+    const res = await fetch(`${NODE_API}/api/node/ledger/account/${ALPACA_FX_ANCHOR_ACCOUNT}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    const meta = await parseAccountMetadata(data.info?.metadata);
+    if (!meta) return;
+    // currencyMap: { "$LUCKY": "keeta_...", ... }
+    for (const [sym, tok] of Object.entries(meta.currencyMap || {})) {
+      const cleanSym = sym.replace(/^\$/, '');
+      alpacaSymbols[tok] = cleanSym;
+      alpacaTokens.add(tok);
+    }
+    // services.fx.<provider>.operations.getEstimate
+    const providers = meta.services?.fx || {};
+    for (const provider of Object.values(providers)) {
+      if (provider.operations?.getEstimate) {
+        alpacaEstimateURL = provider.operations.getEstimate;
+        // Also union the from-token list so we know which assets the anchor will price.
+        for (const route of provider.from || []) {
+          for (const tok of route.currencyCodes || []) alpacaTokens.add(tok);
+        }
+        break;
+      }
+    }
+  } catch (e) {
+    console.warn('Alpaca FX anchor metadata fetch failed', e);
+  }
+}
+
+// Low-level: ask a specific FX anchor for an estimate. Returns the converted bigint
+// (in destination base units) or null if the anchor cannot quote.
+async function getEstimate(endpoint, fromToken, toToken, amountBase) {
   const body = {
     request: {
       from: fromToken,
-      to: USD_TOKEN,
-      amount: oneUnit,
+      to: toToken,
+      amount: amountBase.toString(),
       affinity: 'from',
     },
   };
-  const res = await fetch(`${PRICE_ANCHOR}/api/getEstimate`, {
+  const res = await fetch(endpoint, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`Price lookup failed: ${res.status}`);
+  if (!res.ok) return null;
   const data = await res.json();
   if (!data.ok || !data.estimate) return null;
-  const converted = hexToBigInt(data.estimate.convertedAmount);
+  // canPerformExchange=false is fine for our purposes; we just want the quote.
+  return toBigInt(data.estimate.convertedAmount);
+}
+
+// Cache KTA→USD rate (USD micro-dollars per 1 KTA-unit) for the cascade lookup.
+let ktaUsdRateCache = null;
+async function getKtaUsdRate() {
+  if (ktaUsdRateCache !== null) return ktaUsdRateCache;
+  const oneKta = 10n ** BigInt(ASSETS.KTA.decimals);
+  const usdBase = await getEstimate(`${PRICE_ANCHOR}/api/getEstimate`, KTA_TOKEN, USD_TOKEN, oneKta);
+  if (usdBase === null || usdBase === 0n) { ktaUsdRateCache = 0; return 0; }
   // USD is 2 decimals on-chain
-  return Number(converted) / 100;
+  ktaUsdRateCache = Number(usdBase) / 100;
+  return ktaUsdRateCache;
+}
+
+async function fetchPriceUSD(fromToken, fromDecimals) {
+  if (fromToken === USD_TOKEN) return 1;
+  const oneUnit = 10n ** BigInt(fromDecimals);
+
+  // Path 1: canonical price anchor quotes direct USD.
+  try {
+    const usdBase = await getEstimate(`${PRICE_ANCHOR}/api/getEstimate`, fromToken, USD_TOKEN, oneUnit);
+    if (usdBase !== null && usdBase > 0n) return Number(usdBase) / 100;
+  } catch { /* fall through */ }
+
+  // Path 2: ask the Alpaca FX anchor for the KTA equivalent, then convert KTA→USD.
+  if (alpacaEstimateURL && alpacaTokens.has(fromToken)) {
+    try {
+      const ktaBase = await getEstimate(alpacaEstimateURL, fromToken, KTA_TOKEN, oneUnit);
+      if (ktaBase !== null && ktaBase > 0n) {
+        const ktaUsd = await getKtaUsdRate();
+        if (ktaUsd > 0) {
+          const ktaUnits = Number(ktaBase) / 10 ** ASSETS.KTA.decimals;
+          return ktaUnits * ktaUsd;
+        }
+      }
+    } catch { /* no quote */ }
+  }
+
+  return null;
 }
 
 async function loadHoldings(address) {
   setStatus('Loading account…');
-  const balances = await fetchBalances(address);
+  const [balances] = await Promise.all([
+    fetchBalances(address),
+    loadAlpacaAnchor(), // hydrate the FX anchor metadata in parallel
+  ]);
 
   if (!balances.length) {
     setStatus('This account holds no recognized assets.');
@@ -215,7 +334,7 @@ function render() {
         </div>
       </td>
       <td class="px-4 py-3 text-right mono">${formatAmount(r.amountBase, r.decimals)}</td>
-      <td class="px-4 py-3 text-right mono">${r.priceUSD === undefined ? '<span class="text-neutral-300">…</span>' : r.priceUSD === null ? '<span class="text-neutral-400">—</span>' : formatUSDValue(r.priceUSD)}</td>
+      <td class="px-4 py-3 text-right mono">${r.priceUSD === undefined ? '<span class="text-neutral-300">…</span>' : r.priceUSD === null ? '<span class="text-neutral-400">—</span>' : formatUSDPrice(r.priceUSD)}</td>
       <td class="px-4 py-3 text-right mono font-semibold">${r.valueUSD === undefined ? '<span class="text-neutral-300">…</span>' : r.valueUSD === null ? '<span class="text-neutral-400">—</span>' : formatUSDValue(r.valueUSD)}</td>
     `;
     tbody.appendChild(tr);
