@@ -52,21 +52,42 @@ function formatUSDValue(n) {
 }
 
 async function fetchBalances(address) {
-  const res = await fetch(`${NODE_API}/api/node/ledger/account/${address}/balance`);
+  // truncate=false returns full token ids; default truncates to keeta_...suffix.
+  const res = await fetch(`${NODE_API}/api/node/ledger/account/${address}/balance?truncate=false`);
   if (!res.ok) throw new Error(`Account lookup failed: ${res.status}`);
   const data = await res.json();
   return data.balances || [];
 }
 
-// The node API returns truncated token ids in the balance list (e.g. "keeta_...4ssg").
-// Resolve those to full token ids by matching the suffix against our known asset registry.
-function resolveTokenId(maybeTrunc) {
-  if (!maybeTrunc.includes('...')) return maybeTrunc;
-  const suffix = maybeTrunc.split('...').pop();
-  for (const tokenId of Object.keys(TOKEN_TO_SYM)) {
-    if (tokenId.endsWith(suffix)) return tokenId;
+// Best-effort lookup of an unknown token's symbol and decimals from its ledger account metadata.
+async function fetchTokenInfo(tokenId) {
+  try {
+    const res = await fetch(`${NODE_API}/api/node/ledger/account/${tokenId}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    const info = data.info || {};
+    let decimals = 0;
+    let description = info.description || '';
+    if (info.metadata) {
+      try {
+        const raw = atob(info.metadata);
+        // Some metadata blobs are plain JSON; others are gzipped. Try plain JSON first.
+        try {
+          const meta = JSON.parse(raw);
+          if (typeof meta.decimalPlaces === 'number') decimals = meta.decimalPlaces;
+        } catch { /* not plain JSON, leave decimals=0 */ }
+      } catch { /* atob failed */ }
+    }
+    return {
+      symbol: info.name || tokenId.slice(0, 10),
+      decimals,
+      description,
+      category: 'token',
+      token: tokenId,
+    };
+  } catch {
+    return null;
   }
-  return maybeTrunc;
 }
 
 async function fetchPriceUSD(fromToken, fromDecimals) {
@@ -108,10 +129,16 @@ async function loadHoldings(address) {
 
   const rows = [];
   for (const b of balances) {
-    const tokenId = resolveTokenId(b.token);
-    const symbol = TOKEN_TO_SYM[tokenId] || null;
-    if (!symbol) continue; // skip unknown tokens for v1
-    const info = ASSETS[symbol];
+    const tokenId = b.token;
+    let info = null;
+    let knownSymbol = TOKEN_TO_SYM[tokenId] || null;
+    if (knownSymbol) {
+      info = { ...ASSETS[knownSymbol], symbol: knownSymbol };
+    } else {
+      // Unknown token: fetch its on-chain metadata.
+      info = await fetchTokenInfo(tokenId);
+      if (!info) continue; // truly unresolvable
+    }
     const amountBase = hexToBigInt(b.balance);
     let priceUSD = null;
     let valueUSD = null;
@@ -122,16 +149,17 @@ async function loadHoldings(address) {
         valueUSD = amountUnits * priceUSD;
       }
     } catch (e) {
-      console.warn(`Price fetch failed for ${symbol}`, e);
+      console.warn(`Price fetch failed for ${info.symbol}`, e);
     }
     rows.push({
-      symbol,
+      symbol: info.symbol,
       description: info.description,
       category: info.category,
       amountBase,
       decimals: info.decimals,
       priceUSD,
       valueUSD,
+      tokenId,
     });
   }
 
