@@ -558,8 +558,10 @@ async function onSubmit(e) {
   try {
     await loadHoldings(address, username);
     // update URL so the result is shareable. Prefer the human-readable username when we have one.
+    // Build the query string manually so '$' stays literal (URLSearchParams encodes it as %24).
+    const accountParam = username ? `${username}$keeta.xyz` : address;
     const url = new URL(window.location);
-    url.searchParams.set('account', username ? `${username}$keeta.xyz` : address);
+    url.search = `?account=${accountParam}`;
     window.history.replaceState({}, '', url);
   } catch (e) {
     console.error(e);
