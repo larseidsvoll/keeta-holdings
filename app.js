@@ -3,7 +3,6 @@
 
 const NODE_API = 'https://rep1.main.network.api.keeta.com';
 const PRICE_ANCHOR = 'https://asset-estimate-anchor.keeta.com';
-const SAMPLE_ADDRESS = 'keeta_anqdilpazdekdu4acw65fj7smltcp26wbrildkqtszqvverljpwpezmd44ssg';
 
 let ASSETS = {}; // sym -> {token, decimals, category, description}
 let TOKEN_TO_SYM = {}; // tokenId -> symbol
@@ -236,10 +235,6 @@ function bind() {
   document.querySelectorAll('#filter-tabs button').forEach((btn) =>
     btn.addEventListener('click', () => setFilter(btn.dataset.filter))
   );
-  $('#sample-btn').addEventListener('click', () => {
-    $('#address').value = SAMPLE_ADDRESS;
-    $('#lookup-form').requestSubmit();
-  });
 }
 
 async function init() {
