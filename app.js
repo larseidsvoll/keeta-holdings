@@ -423,6 +423,87 @@ function render() {
 
   const total = sorted.reduce((acc, r) => acc + (r.valueUSD ?? 0), 0);
   $('#total').textContent = formatUSDValue(total);
+  renderAllocation(sorted, total);
+}
+
+// Grayscale donut chart of allocation by value. Top 5 slices are individual
+// assets, with everything below rolled up into "Other". Sub-1% slivers don't
+// get their own slice so the chart stays readable.
+function renderAllocation(rows, total) {
+  const container = $('#allocation');
+  const svg = $('#allocation-chart');
+  const legend = $('#allocation-legend');
+
+  // Hide allocation card when there's nothing to plot.
+  const priced = rows.filter((r) => typeof r.valueUSD === 'number' && r.valueUSD > 0);
+  if (!priced.length || total <= 0) {
+    container.classList.add('hidden');
+    return;
+  }
+  container.classList.remove('hidden');
+
+  // Bucket by symbol so dup symbols (e.g. MURF in our test account) collapse.
+  const byKey = new Map();
+  for (const r of priced) {
+    const key = r.symbol;
+    const prev = byKey.get(key) || { symbol: r.symbol, valueUSD: 0 };
+    prev.valueUSD += r.valueUSD;
+    byKey.set(key, prev);
+  }
+  const buckets = Array.from(byKey.values()).sort((a, b) => b.valueUSD - a.valueUSD);
+
+  // Top 5, roll the rest into Other if it would render meaningfully (>=0.5%).
+  const TOP = 5;
+  const top = buckets.slice(0, TOP);
+  const rest = buckets.slice(TOP);
+  const restSum = rest.reduce((a, b) => a + b.valueUSD, 0);
+  const slices = [...top];
+  if (restSum / total >= 0.005) {
+    slices.push({ symbol: 'Other', valueUSD: restSum });
+  }
+
+  // Grayscale palette, lightest at the smallest slice.
+  const SHADES = ['#0f172a', '#374151', '#525b6e', '#71798c', '#94a3b8', '#cbd5e1'];
+
+  // Build SVG arcs. Use a donut by drawing each slice as a stroked arc on a
+  // background circle. Stroke width controls the donut thickness.
+  const cx = 50, cy = 50, r = 38, sw = 18;
+  let parts = `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#f1f5f9" stroke-width="${sw}"/>`;
+  const circumference = 2 * Math.PI * r;
+  let offset = 0;
+  slices.forEach((s, i) => {
+    const frac = s.valueUSD / total;
+    const length = frac * circumference;
+    const color = SHADES[i] || SHADES[SHADES.length - 1];
+    parts += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${color}" stroke-width="${sw}" stroke-dasharray="${length} ${circumference - length}" stroke-dashoffset="${-offset}" transform="rotate(-90 ${cx} ${cy})"/>`;
+    offset += length;
+  });
+  // Total label in the center.
+  parts += `<text x="${cx}" y="${cy - 2}" text-anchor="middle" font-size="7" fill="#475569" font-family="ui-monospace,monospace">TOTAL</text>`;
+  parts += `<text x="${cx}" y="${cy + 7}" text-anchor="middle" font-size="9" font-weight="600" fill="#0f172a" font-family="ui-sans-serif,system-ui,sans-serif">${escapeHTML(compactUSD(total))}</text>`;
+  svg.innerHTML = parts;
+
+  // Legend.
+  legend.innerHTML = slices.map((s, i) => {
+    const color = SHADES[i] || SHADES[SHADES.length - 1];
+    const pct = (s.valueUSD / total * 100).toFixed(s.valueUSD / total < 0.1 ? 1 : 0);
+    return `
+      <li class="flex items-center justify-between gap-3">
+        <span class="flex items-center gap-2 min-w-0">
+          <span class="inline-block h-2.5 w-2.5 flex-none rounded-sm" style="background:${color}"></span>
+          <span class="truncate font-medium text-neutral-800">${escapeHTML(s.symbol)}</span>
+        </span>
+        <span class="mono text-neutral-500">${pct}%</span>
+      </li>
+    `;
+  }).join('');
+}
+
+function compactUSD(n) {
+  if (n >= 1e9) return '$' + (n / 1e9).toFixed(2) + 'B';
+  if (n >= 1e6) return '$' + (n / 1e6).toFixed(2) + 'M';
+  if (n >= 1e3) return '$' + (n / 1e3).toFixed(1) + 'K';
+  return formatUSDValue(n);
 }
 
 function setFilter(filter) {

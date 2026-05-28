@@ -54,6 +54,18 @@
         </div>
       </div>
 
+      <div id="allocation" class="mb-6 hidden overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm">
+        <div class="flex flex-col gap-6 p-5 sm:flex-row sm:items-center">
+          <div class="flex items-center justify-center">
+            <svg id="allocation-chart" viewBox="0 0 100 100" width="160" height="160" aria-label="Allocation pie chart"></svg>
+          </div>
+          <div class="flex-1">
+            <div class="mb-2 text-xs font-medium uppercase tracking-wide text-neutral-500">Allocation</div>
+            <ul id="allocation-legend" class="space-y-1.5 text-sm"></ul>
+          </div>
+        </div>
+      </div>
+
       <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div id="filter-tabs" class="flex gap-1 rounded-lg border border-neutral-200 bg-white p-1 text-xs font-medium">
           <button data-filter="all"    class="tab-active rounded-md px-3 py-1.5">All</button>
