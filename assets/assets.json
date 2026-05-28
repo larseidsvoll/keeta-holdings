@@ -1,0 +1,15 @@
+{
+  "KTA":   { "token": "keeta_anqdilpazdekdu4acw65fj7smltcp26wbrildkqtszqvverljpwpezmd44ssg", "decimals": 18, "category": "token",  "description": "Keeta" },
+  "USDC":  { "token": "keeta_amnkge74xitii5dsobstldatv3irmyimujfjotftx7plaaaseam4bntb7wnna", "decimals": 6,  "category": "stable", "description": "USD Coin" },
+  "EURC":  { "token": "keeta_apblhar4ncp3ln62wrygsn73pt3houuvj7ic47aarnolpcu67oqn4xqcji3au", "decimals": 6,  "category": "stable", "description": "EUR Coin" },
+  "cbBTC": { "token": "keeta_apyez4az5r6shtblf3qtzirmikq3tghb5svrmmrltdkxgnnzzhlstby3cuscc", "decimals": 8,  "category": "token",  "description": "Coinbase Bitcoin" },
+  "USD":   { "token": "keeta_aonxxqry6rknxyb6c5q2ybxk2gt776xlchhcohhyla5kqvinnaduevuxyx3tc", "decimals": 2,  "category": "fiat",   "description": "United States Dollar" },
+  "CAD":   { "token": "keeta_aozyboy42uks7ticj72awfhpdxwqqfcowezxcew6ecaz5afdt7q2ffycxim4u", "decimals": 2,  "category": "fiat",   "description": "Canadian Dollar" },
+  "GBP":   { "token": "keeta_aojfknc74dabtg72mdhijtszdlv7gi3ht2xp2wrfmdagkthi4n7rulb5e54ss", "decimals": 2,  "category": "fiat",   "description": "British Pound Sterling" },
+  "AED":   { "token": "keeta_anjsvaiiycybwhixlalcpwuvobvmpll4lh24td5qipccegmvfi7c2qdcqnlgu", "decimals": 2,  "category": "fiat",   "description": "United Arab Emirates Dirham" },
+  "EUR":   { "token": "keeta_anutgo4o3yp5tvc6wjt4vzsehjbn7t2wylpxmam4d4ojtdkjj2yca2qoinfcs", "decimals": 2,  "category": "fiat",   "description": "Euro" },
+  "HKD":   { "token": "keeta_apbn7f34cdq62d7iw4ui6sbfaz7fcqdit354wfaotu5zw6d6xfef5vluhdaos", "decimals": 2,  "category": "fiat",   "description": "Hong Kong Dollar" },
+  "JPY":   { "token": "keeta_aowqb2hvkak7frntfbtde27bdmqvxancrja7ndh24m66ahkbrzeda3crqh3vg", "decimals": 0,  "category": "fiat",   "description": "Japanese Yen" },
+  "MXN":   { "token": "keeta_amb3hbd5gbhaorl4y2ddl3xn2q4eyi6dqkn5fpug6diz26v2awsdqhkivmyza", "decimals": 2,  "category": "fiat",   "description": "Mexican Peso" },
+  "CNY":   { "token": "keeta_ao44m7r4utf2vvytsfijermgkstnkka6rp44eahrekvp4cmj5g2orzm3blrvc", "decimals": 2,  "category": "fiat",   "description": "Chinese Yuan" }
+}
