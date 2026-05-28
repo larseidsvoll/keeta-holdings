@@ -600,12 +600,107 @@ function bind() {
 async function init() {
   await loadAssets();
   bind();
+  initAlpacaWallet();
   const params = new URLSearchParams(window.location.search);
   const prefill = params.get('account');
   if (prefill) {
     $('#address').value = prefill;
     $('#lookup-form').requestSubmit();
   }
+}
+
+// Alpaca Wallet browser extension integration.
+// https://alpacadex.com/developers/
+// The extension injects window.alpaca only on whitelisted domains. If our
+// domain is whitelisted, we surface a one-click connect that prefills the
+// lookup box with the connected account address. Until whitelisting lands,
+// window.alpaca is undefined and we stay silent — no broken UI for visitors.
+function initAlpacaWallet() {
+  const btn = $('#alpaca-connect');
+  const label = $('#alpaca-connect-label');
+  const status = $('#alpaca-status');
+  const dot = btn.querySelector('span.rounded-full');
+
+  function setConnected(address) {
+    const short = `${address.slice(0, 10)}…${address.slice(-6)}`;
+    label.textContent = `Connected ${short}`;
+    dot.classList.remove('bg-neutral-400');
+    dot.classList.add('bg-emerald-500');
+  }
+
+  function setDisconnected() {
+    label.textContent = 'Connect Alpaca Wallet';
+    dot.classList.remove('bg-emerald-500');
+    dot.classList.add('bg-neutral-400');
+  }
+
+  async function reveal() {
+    btn.classList.remove('hidden');
+    try {
+      const { connected, address } = await window.alpaca.isConnected();
+      if (connected && address) setConnected(address);
+    } catch {
+      // ignore; user just hasn't connected yet
+    }
+  }
+
+  btn.addEventListener('click', async () => {
+    if (!window.alpaca) return;
+    btn.disabled = true;
+    status.textContent = '';
+    try {
+      const { address } = await window.alpaca.connect();
+      if (address) {
+        setConnected(address);
+        $('#address').value = address;
+        $('#lookup-form').requestSubmit();
+      }
+    } catch (e) {
+      status.textContent = `Wallet error: ${e?.message || 'connect failed'}`;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  // Listen for extension-side state changes when available.
+  function attachListeners() {
+    try {
+      window.alpaca.on?.('accountsChanged', (addr) => {
+        if (addr) {
+          setConnected(addr);
+          $('#address').value = addr;
+          $('#lookup-form').requestSubmit();
+        } else {
+          setDisconnected();
+        }
+      });
+      window.alpaca.on?.('disconnect', setDisconnected);
+    } catch {
+      // optional API; ignore if not present
+    }
+  }
+
+  if (window.alpaca) {
+    reveal();
+    attachListeners();
+    return;
+  }
+
+  // Extension injects at document_start, but if our domain is not yet on
+  // their allowlist, window.alpaca will be undefined. Re-check briefly in
+  // case injection happens after our init.
+  let tries = 0;
+  const poll = setInterval(() => {
+    tries++;
+    if (window.alpaca) {
+      clearInterval(poll);
+      reveal();
+      attachListeners();
+    } else if (tries > 20) {
+      clearInterval(poll);
+      // Stay silent — most visitors do not have the extension.
+    }
+  }, 250);
 }
 
 init();
