@@ -348,7 +348,7 @@ async function loadHoldings(address, knownUsername = null) {
     const label = $('#account-label');
     const short = `${address.slice(0, 14)}…${address.slice(-8)}`;
     if (u && u.username) {
-      label.innerHTML = `<span class="font-semibold text-neutral-800">@${escapeHTML(u.username)}</span> <span class="text-neutral-400">${short}</span>`;
+      label.innerHTML = `<span class="font-semibold text-neutral-800">${escapeHTML(u.username)}$keeta.xyz</span> <span class="text-neutral-400">${short}</span>`;
     } else {
       label.textContent = short;
     }
@@ -537,9 +537,11 @@ async function onSubmit(e) {
   let username = null;
 
   if (!raw.startsWith('keeta_')) {
+    // Accept either bare "ty" or full "ty$keeta.xyz"; anchor wants the bare handle.
+    const handle = raw.toLowerCase().endsWith('$keeta.xyz') ? raw.slice(0, -'$keeta.xyz'.length) : raw;
     // Treat as a username, resolve through the username anchor.
     setStatus('Resolving username…');
-    const resolved = await resolveViaUsernameAnchor(raw);
+    const resolved = await resolveViaUsernameAnchor(handle);
     if (!resolved) {
       setStatus(`Could not resolve username "${raw}". Try a Keeta account address (starts with keeta_).`);
       return;
