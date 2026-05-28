@@ -256,6 +256,9 @@ async function loadHoldings(address) {
       info = await fetchTokenInfo(tokenId);
     }
     if (!info) return null;
+    // Canonical assets (anything in our precomputed registry) are pinned to the
+    // top of the table. Community tokens sort below them.
+    const isCanonical = knownSymbol !== null;
     return {
       symbol: info.symbol,
       description: info.description,
@@ -265,6 +268,7 @@ async function loadHoldings(address) {
       priceUSD: undefined, // undefined = still loading; null = no quote
       valueUSD: undefined,
       tokenId,
+      isCanonical,
     };
   }));
 
@@ -303,6 +307,9 @@ function render() {
   const filtered = lastRows.filter((r) => currentFilter === 'all' || r.category === currentFilter);
 
   const sorted = [...filtered].sort((a, b) => {
+    // Canonical assets always pin to the top of the table regardless of sort.
+    if (a.isCanonical && !b.isCanonical) return -1;
+    if (!a.isCanonical && b.isCanonical) return 1;
     switch (currentSort) {
       case 'value-desc': return (b.valueUSD ?? -1) - (a.valueUSD ?? -1);
       case 'value-asc':  return (a.valueUSD ?? -1) - (b.valueUSD ?? -1);
